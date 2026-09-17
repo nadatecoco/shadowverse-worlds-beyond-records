@@ -1,57 +1,78 @@
 import SwiftUI
 
 struct CellSelection: Identifiable { var id: String { "\(deck)/\(opponent)" }; var deck: UUID; var opponent: UUID }
+struct ClassCellSelection: Identifiable { var id: String { "\(deck)/\(opponentClass.rawValue)" }; var deck: UUID; var opponentClass: CardClass }
+
 struct MatrixView: View {
     @Environment(Store.self) private var store
     @Binding var scope: String
     @State private var mode = 2
-    @State private var cardClass: CardClass?
-    @State private var selected: CellSelection?
-    private var opponents: [Archetype] { store.data.archetypes.filter { !$0.archived && !store.data.isQuickDefaultArchetype($0.id) && (cardClass == nil || $0.cardClass == cardClass) } }
+    @State private var selected: ClassCellSelection?
+    private var decks: [Deck] { store.data.decks.filter { !$0.archived && !store.data.isQuickDefaultDeck($0.id) } }
     var body: some View {
         VStack(spacing: 12) {
-            VStack {
-                ScopePicker(scope: $scope)
-                Picker("表示", selection: $mode) { Text("🧠 主観").tag(0); Text("📊 実戦").tag(1); Text("両方").tag(2) }.pickerStyle(.segmented)
-                Picker("相手クラス", selection: $cardClass) { Text("全クラス").tag(nil as CardClass?); ForEach(CardClass.allCases) { Text(store.data.classTitle($0)).tag(Optional($0)) } }
-            }.padding(.horizontal)
-            if store.data.decks.filter({ !$0.archived }).isEmpty || opponents.isEmpty {
-                ContentUnavailableView("デッキとアーキタイプを登録", systemImage: "tablecells", description: Text("「デッキ／設定」で登録すると相性表が表示されます。"))
+            VStack { ScopePicker(scope: $scope); Picker("表示", selection: $mode) { Text("🧠 主観").tag(0); Text("📊 実戦").tag(1); Text("両方").tag(2) }.pickerStyle(.segmented) }.padding(.horizontal)
+            if decks.isEmpty {
+                ContentUnavailableView("自分のデッキを登録してください", systemImage: "tablecells", description: Text("「デッキ／設定」で登録したデッキがここに表示されます。"))
             } else {
                 ScrollView([.horizontal, .vertical]) {
                     Grid(alignment: .topLeading, horizontalSpacing: 1, verticalSpacing: 1) {
                         GridRow {
-                            Text("自分 ↓ / 相手 →").font(.caption).frame(width: 120)
-                            ForEach(opponents) { Text($0.name).font(.subheadline.bold()).frame(width: 160).frame(minHeight: 44) }
+                            Text("自分 ↓ / 相手 →").font(.caption).frame(width: 132, height: 54)
+                            ForEach(CardClass.allCases) { cls in
+                                Text(store.data.classTitle(cls)).font(.caption.bold()).multilineTextAlignment(.center).frame(width: 96, height: 54).accessibilityLabel(store.data.classTitle(cls))
+                            }
                         }
-                        ForEach(store.data.decks.filter { !$0.archived }) { deck in
+                        ForEach(decks) { deck in
                             GridRow {
-                                Text(deck.name).font(.headline).frame(width: 120, alignment: .leading).padding(.vertical, 12)
-                                ForEach(opponents) { opponent in
-                                    Button { selected = CellSelection(deck: deck.id, opponent: opponent.id) } label: {
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            Text("\(deck.name) → \(opponent.name)").font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-                                            if mode != 1 {
-                                                let value = Analysis.value(data: store.data, scope: scope, deck: deck.id, opponent: .archetype(opponent.id), source: .opinion)
-                                                Text("🧠 " + (value.percent == nil ? "未設定" : percentage(value.percent)))
-                                            }
-                                            if mode != 0 {
-                                                let value = Analysis.value(data: store.data, scope: scope, deck: deck.id, opponent: .archetype(opponent.id), source: .actual)
-                                                Text("📊 " + (value.percent == nil ? "未対戦" : percentage(value.percent)))
-                                                Text("\(value.sampleCount ?? 0)戦 ・ \(Stats.sample(value.sampleCount ?? 0))").font(.caption2).foregroundStyle(.secondary)
-                                            }
-                                        }.frame(width: 144, alignment: .leading).padding(8).frame(maxHeight: .infinity).background(.quaternary.opacity(0.5))
-                                    }.buttonStyle(.plain).accessibilityLabel("\(deck.name) 対 \(opponent.name)")
+                                Text(store.data.deckTitle(deck.id)).font(.caption.bold()).frame(width: 132, alignment: .leading).padding(8)
+                                ForEach(CardClass.allCases) { cls in
+                                    let opinion = Analysis.classValue(data: store.data, scope: scope, deck: deck.id, opponentClass: cls, source: .opinion)
+                                    let actual = Analysis.classValue(data: store.data, scope: scope, deck: deck.id, opponentClass: cls, source: .actual)
+                                    Button { selected = ClassCellSelection(deck: deck.id, opponentClass: cls) } label: {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            if mode != 1 { Text("🧠" + (opinion.percent.map { String(Int($0.rounded())) } ?? "—")).monospacedDigit() }
+                                            if mode != 0 { Text("📊" + (actual.percent.map { String(Int($0.rounded())) } ?? "—")).monospacedDigit(); Text(actual.sampleCount == 0 ? "未対戦" : "\(actual.sampleCount!)戦").font(.caption2).foregroundStyle(.secondary) }
+                                        }.frame(width: 88, minHeight: 64, alignment: .leading).padding(6).background(.quaternary.opacity(0.5))
+                                    }.buttonStyle(.plain).accessibilityLabel("\(store.data.deckTitle(deck.id)) 対 \(store.data.classTitle(cls))")
                                 }
                             }
                         }
                     }.padding(.horizontal)
                 }.defaultScrollAnchor(.topLeading)
             }
-            Text(scope == "all" ? "全期間の主観値は独立した評価です。セルをタップして編集。" : "セルをタップして主観値・先後別成績を確認。").font(.caption).foregroundStyle(.secondary).padding(.horizontal)
-        }
-        .navigationTitle("相性表")
-        .sheet(item: $selected) { OpinionEditor(scope: scope, selection: $0) }
+            Text("セルをタップすると、クラス全体の主観値・実戦値とアーキタイプ別の内訳を確認できます。").font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+        }.navigationTitle("相性表").sheet(item: $selected) { ClassOpinionEditor(scope: scope, selection: $0) }
+    }
+}
+
+struct ClassOpinionEditor: View {
+    @Environment(Store.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let scope: String; let selection: ClassCellSelection
+    @State private var percent = 50.0
+    @State private var error: String?
+    @State private var archetypeSelection: CellSelection?
+    private var stats: Stats { Stats(store.data.filtered(scope, deckID: selection.deck).filter { $0.opponentClass == selection.opponentClass }) }
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section { Text(store.data.deckTitle(selection.deck)); Text("対 " + store.data.classTitle(selection.opponentClass)) }
+                Section("🧠 自分の評価") {
+                    HStack { ForEach([40.0,45.0,50.0,55.0,60.0], id: \.self) { value in Button("\(Int(value))") { percent = value }.buttonStyle(.bordered) } }
+                    Stepper("\(Int(percent.rounded()))%", value: $percent, in: 0...100, step: 1)
+                    Button("主観値をリセット", role: .destructive) { do { try store.commit { $0.classOpinions.removeAll { $0.scope == scope && $0.deckID == selection.deck && $0.opponentClass == selection.opponentClass } }; dismiss() } catch { error = error.localizedDescription } }
+                }
+                Section("📊 実戦値") { StatsView(stats: stats); Text("先攻：\(stats.firstWins)勝\(stats.firstLosses)敗"); Text("後攻：\(stats.secondWins)勝\(stats.secondLosses)敗"); Text(stats.count == 0 ? "未対戦" : stats.sample) }
+                let archetypes = store.data.archetypes.filter { !$0.archived && !store.data.isQuickDefaultArchetype($0.id) && $0.cardClass == selection.opponentClass }
+                if !archetypes.isEmpty { Section("アーキタイプ別") { ForEach(archetypes) { archetype in
+                    let actual = Analysis.value(data: store.data, scope: scope, deck: selection.deck, opponent: .archetype(archetype.id), source: .actual)
+                    let opinion = Analysis.value(data: store.data, scope: scope, deck: selection.deck, opponent: .archetype(archetype.id), source: .opinion)
+                    Button { archetypeSelection = CellSelection(deck: selection.deck, opponent: archetype.id) } label: { HStack { Text(archetype.name); Spacer(); Text("🧠\(opinion.percent.map { String(Int($0.rounded())) } ?? "—")  📊\(actual.percent.map { String(Int($0.rounded())) } ?? "—")") } }
+                } } }
+                if let error { Text(error).foregroundStyle(.red) }
+            }.navigationTitle("クラス相性の詳細").toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("保存") { do { try store.commit { data in data.classOpinions.removeAll { $0.scope == scope && $0.deckID == selection.deck && $0.opponentClass == selection.opponentClass }; data.classOpinions.append(ClassOpinion(scope: scope, deckID: selection.deck, opponentClass: selection.opponentClass, percent: percent)) }; dismiss() } catch { error = error.localizedDescription } } } }.onAppear { percent = store.data.classOpinions.first { $0.scope == scope && $0.deckID == selection.deck && $0.opponentClass == selection.opponentClass }?.percent ?? 50 }
+        }.sheet(item: $archetypeSelection) { OpinionEditor(scope: scope, selection: $0) }
     }
 }
 struct OpinionEditor: View {

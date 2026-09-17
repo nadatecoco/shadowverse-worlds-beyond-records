@@ -106,7 +106,7 @@ struct CatalogView: View {
         store.perform { data in
             switch kind {
             case .deck:
-                if data.matches.contains(where: { $0.deckID == id }) || data.opinions.contains(where: { $0.deckID == id }) { data.decks[data.decks.firstIndex { $0.id == id }!].archived = true }
+                if data.matches.contains(where: { $0.deckID == id }) || data.opinions.contains(where: { $0.deckID == id }) || data.classOpinions.contains(where: { $0.deckID == id }) { data.decks[data.decks.firstIndex { $0.id == id }!].archived = true }
                 else { data.decks.removeAll { $0.id == id } }
                 if data.lastDeckID == id { data.lastDeckID = nil }
                 if data.activeDeckID == id { data.activeDeckID = nil }
@@ -115,7 +115,7 @@ struct CatalogView: View {
                     data.archetypes[data.archetypes.firstIndex { $0.id == id }!].archived = true
                 } else { data.archetypes.removeAll { $0.id == id } }
             case .season:
-                guard data.currentSeasonID != id, !data.matches.contains(where: { $0.seasonID == id }), !data.opinions.contains(where: { $0.scope == id.uuidString }), !data.distributions.contains(where: { $0.scope == id.uuidString }) else { throw AppError.message("現在の環境やデータがある環境は削除できません。") }
+                guard data.currentSeasonID != id, !data.matches.contains(where: { $0.seasonID == id }), !data.opinions.contains(where: { $0.scope == id.uuidString }), !data.classOpinions.contains(where: { $0.scope == id.uuidString }), !data.distributions.contains(where: { $0.scope == id.uuidString }) else { throw AppError.message("現在の環境やデータがある環境は削除できません。") }
                 data.seasons.removeAll { $0.id == id }
             }
         }
@@ -132,7 +132,7 @@ struct CatalogEditor: View {
     @State private var error: String?
     private var classificationLocked: Bool {
         guard let itemID else { return false }
-        if kind == .deck { return store.data.matches.contains { $0.deckID == itemID } || store.data.opinions.contains { $0.deckID == itemID } }
+        if kind == .deck { return store.data.matches.contains { $0.deckID == itemID } || store.data.opinions.contains { $0.deckID == itemID } || store.data.classOpinions.contains { $0.deckID == itemID } }
         return store.data.decks.contains { $0.archetypeID == itemID } || store.data.matches.contains { $0.opponentID == itemID } || store.data.opinions.contains { $0.opponentID == itemID } || store.data.distributions.contains { $0.weights[itemID.uuidString] != nil }
     }
     var body: some View {

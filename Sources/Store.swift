@@ -31,7 +31,7 @@ import Observation
             context = ModelContext(container); context?.autosaveEnabled = false
             if let existing = try context?.fetch(FetchDescriptor<LocalArchive>()).first {
                 data = try JSONDecoder().decode(AppData.self, from: existing.payload)
-                if data.version == 1 {
+                if data.version < 3 {
                     if !inMemory {
                         let folder = URL.documentsDirectory.appending(path: "移行前バックアップ")
                         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

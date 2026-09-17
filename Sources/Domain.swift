@@ -33,13 +33,16 @@ struct Match: Codable, Identifiable, Equatable, Sendable {
 struct Opinion: Codable, Identifiable, Equatable, Sendable {
     var id = UUID(); var scope: String; var deckID: UUID; var opponentID: UUID; var percent: Double
 }
+struct ClassOpinion: Codable, Identifiable, Equatable, Sendable {
+    var id = UUID(); var scope: String; var deckID: UUID; var opponentClass: CardClass; var percent: Double
+}
 struct Distribution: Codable, Identifiable, Equatable, Sendable {
     var id = UUID(); var scope: String; var cardClass: CardClass; var weights: [String: Double]
 }
 struct AppData: Codable, Equatable, Sendable {
-    var version = 2
+    var version = 3
     var archetypes: [Archetype] = []; var decks: [Deck] = []; var seasons: [Season] = []
-    var matches: [Match] = []; var opinions: [Opinion] = []; var distributions: [Distribution] = []
+    var matches: [Match] = []; var opinions: [Opinion] = []; var classOpinions: [ClassOpinion] = []; var distributions: [Distribution] = []
     var classIcons: [String: String]? = nil
     func icon(for cardClass: CardClass) -> String { classIcons?[cardClass.rawValue] ?? cardClass.defaultIcon }
     func classTitle(_ cardClass: CardClass) -> String { icon(for: cardClass) + " " + cardClass.name }
@@ -48,6 +51,23 @@ struct AppData: Codable, Equatable, Sendable {
     }
     var currentSeasonID: UUID?; var lastDeckID: UUID?
     var activeDeckID: UUID? = nil
+    private enum CodingKeys: String, CodingKey { case version, archetypes, decks, seasons, matches, opinions, classOpinions, distributions, classIcons, currentSeasonID, lastDeckID, activeDeckID }
+    init() {}
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 2
+        archetypes = try c.decodeIfPresent([Archetype].self, forKey: .archetypes) ?? []
+        decks = try c.decodeIfPresent([Deck].self, forKey: .decks) ?? []
+        seasons = try c.decodeIfPresent([Season].self, forKey: .seasons) ?? []
+        matches = try c.decodeIfPresent([Match].self, forKey: .matches) ?? []
+        opinions = try c.decodeIfPresent([Opinion].self, forKey: .opinions) ?? []
+        classOpinions = try c.decodeIfPresent([ClassOpinion].self, forKey: .classOpinions) ?? []
+        distributions = try c.decodeIfPresent([Distribution].self, forKey: .distributions) ?? []
+        classIcons = try c.decodeIfPresent([String: String].self, forKey: .classIcons)
+        currentSeasonID = try c.decodeIfPresent(UUID.self, forKey: .currentSeasonID)
+        lastDeckID = try c.decodeIfPresent(UUID.self, forKey: .lastDeckID)
+        activeDeckID = try c.decodeIfPresent(UUID.self, forKey: .activeDeckID)
+    }
     static func fresh() -> Self {
         var value = Self(); let season = Season(name: "現在の環境")
         value.seasons = [season]; value.currentSeasonID = season.id; return value
@@ -63,11 +83,12 @@ struct AppData: Codable, Equatable, Sendable {
         matches.filter { (scope == "all" || $0.seasonID.uuidString == scope) && (deckID == nil || $0.deckID == deckID) }
     }
     mutating func migrate() throws {
-        guard version == 1 || version == 2 else { throw AppError.message("未対応のデータ形式です。") }
+        guard (1...3).contains(version) else { throw AppError.message("未対応のデータ形式です。") }
         if version == 1 {
             activeDeckID = decks.first { $0.id == lastDeckID && !$0.archived }?.id
             version = 2
         }
+        if version == 2 { version = 3 }
     }
     var activeDeck: Deck? { decks.first { $0.id == activeDeckID && !$0.archived } }
     func deckTitle(_ id: UUID) -> String {
@@ -88,6 +109,7 @@ struct AppData: Codable, Equatable, Sendable {
         (.nemesis, UUID(uuidString: "10000000-0000-4000-8000-000000000007")!, UUID(uuidString: "20000000-0000-4000-8000-000000000007")!)
     ]
     func isQuickDefaultArchetype(_ id: UUID) -> Bool { Self.quickDefaults.contains { $0.1 == id } }
+    func isQuickDefaultDeck(_ id: UUID) -> Bool { Self.quickDefaults.contains { $0.2 == id } }
 
     @discardableResult mutating func ensureQuickEntryDefaults() -> Bool {
         var changed = false
@@ -118,11 +140,11 @@ struct AppData: Codable, Equatable, Sendable {
     }
     func validate() throws {
         guard (classIcons ?? [:]).allSatisfy({ CardClass(rawValue: $0.key) != nil && Self.validIcon($0.value) }) else { throw AppError.message("クラスアイコンには絵文字を1つ指定してください。") }
-        guard version == 2 else { throw AppError.message("このバックアップの形式には対応していません。") }
+        guard version == 3 else { throw AppError.message("このバックアップの形式には対応していません。") }
         func unique<T: Identifiable>(_ values: [T]) -> Bool where T.ID: Hashable {
             Set(values.map(\.id)).count == values.count
         }
-        guard unique(archetypes), unique(decks), unique(seasons), unique(matches), unique(opinions), unique(distributions) else {
+        guard unique(archetypes), unique(decks), unique(seasons), unique(matches), unique(opinions), unique(classOpinions), unique(distributions) else {
             throw AppError.message("識別番号が重複しています。")
         }
         let archetypeIDs = Set(archetypes.map(\.id)), deckIDs = Set(decks.map(\.id)), seasonIDs = Set(seasons.map(\.id))
@@ -151,6 +173,13 @@ struct AppData: Codable, Equatable, Sendable {
             guard validScope(value.scope), deckIDs.contains(value.deckID), archetypeIDs.contains(value.opponentID),
                   value.percent.isFinite, (0...100).contains(value.percent), opinionKeys.insert(key).inserted else {
                 throw AppError.message("主観相性の値または組み合わせが不正です。")
+            }
+        }
+        var classOpinionKeys = Set<String>()
+        for value in classOpinions {
+            let key = "\(value.scope)/\(value.deckID)/\(value.opponentClass.rawValue)"
+            guard validScope(value.scope), deckIDs.contains(value.deckID), value.percent.isFinite, (0...100).contains(value.percent), classOpinionKeys.insert(key).inserted else {
+                throw AppError.message("クラス主観相性の値または組み合わせが不正です。")
             }
         }
         var distributionKeys = Set<String>()
@@ -199,6 +228,14 @@ struct MatchupValue {
     var percent: Double?; var sampleCount: Int?; var details: [String]
 }
 enum Analysis {
+    static func classValue(data: AppData, scope: String, deck: UUID, opponentClass: CardClass, source: ValueSource) -> MatchupValue {
+        if source == .opinion {
+            return MatchupValue(percent: data.classOpinions.first { $0.scope == scope && $0.deckID == deck && $0.opponentClass == opponentClass }?.percent, sampleCount: nil, details: [])
+        }
+        let stats = Stats(data.filtered(scope, deckID: deck).filter { $0.opponentClass == opponentClass })
+        return MatchupValue(percent: stats.rate, sampleCount: stats.count,
+                            details: ["\(stats.wins)勝\(stats.losses)敗 / \(stats.count)戦", "先攻 \(stats.firstWins)-\(stats.firstLosses) ・ 後攻 \(stats.secondWins)-\(stats.secondLosses)"])
+    }
     static func value(data: AppData, scope: String, deck: UUID, opponent: Opponent, source: ValueSource) -> MatchupValue {
         switch opponent {
         case .archetype(let id):

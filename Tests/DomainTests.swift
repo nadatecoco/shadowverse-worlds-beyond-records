@@ -124,7 +124,7 @@ final class DomainTests: XCTestCase {
     @MainActor func testOldBackupMigrationAndFixedDeck() throws {
         var old = fixture(); old.version = 1; old.activeDeckID = nil
         let migrated = try Store.decodeBackup(JSONEncoder().encode(old))
-        XCTAssertEqual(migrated.version, 2)
+        XCTAssertEqual(migrated.version, 3)
         XCTAssertEqual(migrated.activeDeckID, old.lastDeckID)
         let store = Store(inMemory: true)
         try store.commit { $0 = migrated; $0.decks.append(Deck(name: "別デッキ", archetypeID: $0.archetypes[0].id)) }
@@ -144,7 +144,7 @@ final class DomainTests: XCTestCase {
         try context.save()
         let migrated = Store(storageURL: url)
         XCTAssertNil(migrated.loadError)
-        XCTAssertEqual(migrated.data.version, 2)
+        XCTAssertEqual(migrated.data.version, 3)
         XCTAssertEqual(migrated.data.matches, old.matches)
         XCTAssertEqual(migrated.data.activeDeckID, old.lastDeckID)
         XCTAssertEqual(Store(storageURL: url).data, migrated.data)
@@ -256,6 +256,30 @@ final class DomainTests: XCTestCase {
         d.matches.append(Match(seasonID: d.currentSeasonID!, deckID: deck, opponentClass: .dragon, opponentID: b, won: false, first: false))
         let value = Analysis.value(data: d, scope: "all", deck: deck, opponent: .cardClass(.dragon), source: .actual)
         XCTAssertEqual(value.percent, 70); XCTAssertEqual(value.sampleCount, 1)
+    }
+    func testClassValueIncludesUnknownArchetypeAndFixedClasses() throws {
+        var d = fixture(); let deck = d.decks[0].id
+        d.matches = [Match(seasonID: d.currentSeasonID!, deckID: deck, opponentClass: .witch, opponentID: nil, won: true, first: true)]
+        d.classOpinions = [ClassOpinion(scope: "all", deckID: deck, opponentClass: .witch, percent: 55)]
+        let actual = Analysis.classValue(data: d, scope: "all", deck: deck, opponentClass: .witch, source: .actual)
+        XCTAssertEqual(actual.percent, 100); XCTAssertEqual(actual.sampleCount, 1)
+        XCTAssertEqual(Analysis.classValue(data: d, scope: "all", deck: deck, opponentClass: .witch, source: .opinion).percent, 55)
+        XCTAssertEqual(CardClass.allCases.count, 7)
+    }
+    func testClassOpinionsAreIndependentByDeckAndScope() throws {
+        var d = fixture(); let deck = d.decks[0].id
+        let other = Deck(name: "別", archetypeID: d.archetypes[0].id); d.decks.append(other)
+        d.classOpinions = [ClassOpinion(scope: "all", deckID: deck, opponentClass: .dragon, percent: 60), ClassOpinion(scope: d.currentSeasonID!.uuidString, deckID: deck, opponentClass: .dragon, percent: 40), ClassOpinion(scope: "all", deckID: other.id, opponentClass: .dragon, percent: 20)]
+        XCTAssertEqual(Analysis.classValue(data: d, scope: "all", deck: deck, opponentClass: .dragon, source: .opinion).percent, 60)
+        XCTAssertEqual(Analysis.classValue(data: d, scope: d.currentSeasonID!.uuidString, deck: deck, opponentClass: .dragon, source: .opinion).percent, 40)
+        XCTAssertEqual(Analysis.classValue(data: d, scope: "all", deck: other.id, opponentClass: .dragon, source: .opinion).percent, 20)
+    }
+    func testV2BackupMigratesToV3WithoutLosingRecords() throws {
+        var old = fixture(); old.version = 2
+        let bytes = try JSONEncoder().encode(old)
+        var decoded = try JSONDecoder().decode(AppData.self, from: bytes)
+        XCTAssertEqual(decoded.version, 2); try decoded.migrate(); try decoded.validate()
+        XCTAssertEqual(decoded.version, 3); XCTAssertEqual(decoded.matches, old.matches); XCTAssertEqual(decoded.opinions, old.opinions)
     }
     @MainActor func testRestoreAndRecoveryBackup() throws {
         let store = Store(inMemory: true); let before = store.data
