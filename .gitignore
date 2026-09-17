@@ -1,0 +1,9 @@
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcresult
+
+# ローカル検証で生成される端末ログ・スクリーンショット
+検証結果/*.log
+検証結果/*.png
