@@ -1,5 +1,7 @@
 # シャドバ戦績研究
 
+次の開発セッションは、最初に[プロジェクト開始](プロジェクト開始.md)を読んでください。
+
 iOS 26以降。SwiftUI・SwiftData・App Intents・ActivityKit・WidgetKitによるローカル戦績研究アプリです。
 
 「シャドバ戦績研究.xcodeproj」のShadowRecordスキームを実行します。実機用には既存の開発チームで署名してください。
